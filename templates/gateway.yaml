@@ -6,3 +6,7 @@ metadata:
     cert-manager.io/cluster-issuer: letsencrypt
 spec:
   gatewayClassName: default
+  allowedListeners:
+    ListenerNamespaces:
+      from: All
+
