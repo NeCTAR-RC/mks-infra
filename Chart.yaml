@@ -1,0 +1,7 @@
+apiVersion: v2
+name: mks-infra
+description: Installs some resources for MKS clusters
+type: application
+version: 0.0.1
+sources:
+- https://github.com/NeCTAR-RC/mks-infra.git

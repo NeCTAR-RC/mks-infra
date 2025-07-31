@@ -1,0 +1,16 @@
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: default-proxy-config
+  namespace: envoy-gateway-system
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        replicas: {{ .Values.gateway.replicas }}
+      envoyPDB:
+        minAvailable: {{ .Values.gateway.minAvailable }}
+      envoyService:
+        loadBalancerIP: {{ .Values.gateway.loadBalancerIP }}
