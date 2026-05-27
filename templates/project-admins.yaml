@@ -1,0 +1,100 @@
+---
+# Custom ClusterRole — broad access without impersonate/bind/escalate
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: project-admin
+rules:
+- apiGroups: ["*"]
+  resources: ["*"]
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+  - deletecollection
+- nonResourceURLs: ["*"]
+  verbs: ["get"]
+---
+# Bind the group to the custom role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: project-admins
+subjects:
+- kind: Group
+  name: project-admins
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: project-admin
+  apiGroup: rbac.authorization.k8s.io
+---
+# Admission policy — blocks access to protected namespaces and
+# cluster-scoped escape hatches (RBAC writes, namespace deletion)
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: restrict-project-admins
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["*"]
+      apiVersions: ["*"]
+      operations: ["CREATE", "UPDATE", "DELETE"]
+      resources: ["*"]
+      scope: Namespaced
+    - apiGroups: ["rbac.authorization.k8s.io"]
+      apiVersions: ["*"]
+      operations: ["CREATE", "UPDATE", "DELETE"]
+      resources: ["clusterroles", "clusterrolebindings"]
+      scope: Cluster
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["UPDATE", "DELETE"]
+      resources: ["namespaces"]
+      scope: Cluster
+  variables:
+  - name: protectedNamespaces
+    expression: "['kube-system', 'envoy-gateway-system', 'cert-manager']"
+  - name: isProjectAdmin
+    expression: "'project-admins' in request.userInfo.groups"
+  - name: isClusterRBAC
+    expression: |
+      request.resource.group == 'rbac.authorization.k8s.io' &&
+      request.resource.resource in ['clusterroles', 'clusterrolebindings']
+  - name: isNamespaceResource
+    expression: |
+      request.resource.group == '' &&
+      request.resource.resource == 'namespaces'
+  validations:
+  # Block writes inside protected namespaces
+  - expression: |
+      !variables.isProjectAdmin ||
+      variables.isClusterRBAC ||
+      variables.isNamespaceResource ||
+      !(request.namespace in variables.protectedNamespaces)
+    message: "project-admins cannot modify resources in protected namespaces"
+  # Block ClusterRole / ClusterRoleBinding writes
+  - expression: |
+      !variables.isProjectAdmin ||
+      !variables.isClusterRBAC
+    message: "project-admins cannot create or modify ClusterRoles or ClusterRoleBindings"
+  # Block modification or deletion of protected Namespace objects themselves
+  - expression: |
+      !variables.isProjectAdmin ||
+      !variables.isNamespaceResource ||
+      !(request.name in variables.protectedNamespaces)
+    message: "project-admins cannot modify or delete protected namespaces"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: restrict-project-admins-binding
+spec:
+  policyName: restrict-project-admins
+  validationActions: [Deny]
