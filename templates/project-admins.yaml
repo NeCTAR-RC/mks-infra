@@ -60,7 +60,7 @@ spec:
       scope: Cluster
   variables:
   - name: protectedNamespaces
-    expression: "['kube-system', 'envoy-gateway-system', 'cert-manager']"
+    expression: "['kube-system', 'envoy-gateway-system', 'cert-manager', 'observability']"
   - name: isProjectAdmin
     expression: "'project-admins' in request.userInfo.groups"
   - name: isClusterRBAC
