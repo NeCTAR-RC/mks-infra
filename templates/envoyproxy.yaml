@@ -12,5 +12,7 @@ spec:
         replicas: {{ .Values.gateway.replicas }}
       envoyPDB:
         minAvailable: {{ .Values.gateway.minAvailable }}
+      {{- if .Values.gateway.loadBalancerIP }}
       envoyService:
         loadBalancerIP: {{ .Values.gateway.loadBalancerIP }}
+      {{- end }}
