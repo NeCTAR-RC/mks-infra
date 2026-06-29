@@ -71,6 +71,10 @@ spec:
     expression: |
       request.resource.group == '' &&
       request.resource.resource == 'namespaces'
+  - name: isPrometheusRule
+    expression: |
+      request.resource.group == 'monitoring.coreos.com' &&
+      request.resource.resource == 'prometheusrules'
   validations:
   # Block writes inside protected namespaces
   - expression: |
@@ -90,6 +94,19 @@ spec:
       !variables.isNamespaceResource ||
       !(request.name in variables.protectedNamespaces)
     message: "project-admins cannot modify or delete protected namespaces"
+  # Block project-admins from claiming the mks-admin alert owner on their own
+  # PrometheusRules, which would route their alerts to the MKS on-call channel
+  # via the central Alertmanager. Customer rules are otherwise evaluated and
+  # alert through the local Alertmanager.
+  - expression: |
+      !variables.isProjectAdmin ||
+      !variables.isPrometheusRule ||
+      !(request.operation == 'CREATE' || request.operation == 'UPDATE') ||
+      !has(object.spec) || !has(object.spec.groups) ||
+      !object.spec.groups.exists(g,
+        has(g.rules) && g.rules.exists(r,
+          has(r.labels) && 'owner' in r.labels && r.labels['owner'] == 'mks-admin'))
+    message: "project-admins cannot set the owner=mks-admin label on PrometheusRule alerts"
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
