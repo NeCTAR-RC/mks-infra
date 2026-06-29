@@ -1,0 +1,33 @@
+# Conservative envoy-gateway alerts. Availability only for now: the xDS-sync /
+# listener / cluster-health signals from the envoy_* data-plane stats should be
+# added once the PodMonitor targets are confirmed live. The `job` label is the
+# envoy-gateway control-plane service name; validate against live targets.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: envoy-gateway-rules
+  namespace: observability
+  labels:
+    release: prometheus
+spec:
+  groups:
+    - name: envoy-gateway
+      rules:
+        - alert: EnvoyGatewayAbsent
+          expr: absent(up{job="envoy-gateway"})
+          for: 10m
+          labels:
+            severity: critical
+            owner: mks-admin
+          annotations:
+            summary: "Envoy Gateway control plane is not being scraped."
+            description: "The envoy-gateway controller has disappeared from Prometheus service discovery. Gateway/HTTPRoute changes will not be programmed into the data plane."
+        - alert: EnvoyGatewayDown
+          expr: max by (cluster) (up{job="envoy-gateway"}) == 0
+          for: 10m
+          labels:
+            severity: critical
+            owner: mks-admin
+          annotations:
+            summary: "Envoy Gateway control plane is down."
+            description: "All envoy-gateway controller targets are reporting down on cluster {{ $labels.cluster }}."

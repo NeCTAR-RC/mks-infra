@@ -1,0 +1,42 @@
+# Conservative fluent-bit alerts: availability plus dropped/failed output
+# records, which mean we are losing logs. Metric names follow fluent-bit's
+# Prometheus exporter; the `job` label is the fluent-bit service name. Validate
+# names/thresholds against live targets before relying on them.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: fluent-bit-rules
+  namespace: observability
+  labels:
+    release: prometheus
+spec:
+  groups:
+    - name: fluent-bit
+      rules:
+        - alert: FluentBitAbsent
+          expr: absent(up{job="fluent-bit"})
+          for: 10m
+          labels:
+            severity: warning
+            owner: mks-admin
+          annotations:
+            summary: "fluent-bit is not being scraped."
+            description: "fluent-bit has disappeared from Prometheus service discovery; cluster and customer logs may not be shipped."
+        - alert: FluentBitDroppedRecords
+          expr: sum by (cluster, name) (rate(fluentbit_output_dropped_records_total[5m])) > 0
+          for: 15m
+          labels:
+            severity: warning
+            owner: mks-admin
+          annotations:
+            summary: "fluent-bit is dropping log records."
+            description: "Output {{ $labels.name }} has been dropping records over the last 15m; logs are being lost."
+        - alert: FluentBitOutputRetriesFailed
+          expr: sum by (cluster, name) (rate(fluentbit_output_retries_failed_total[5m])) > 0
+          for: 15m
+          labels:
+            severity: warning
+            owner: mks-admin
+          annotations:
+            summary: "fluent-bit output retries are failing."
+            description: "Output {{ $labels.name }} has failed retries over the last 15m."

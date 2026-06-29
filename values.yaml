@@ -8,3 +8,9 @@ gateway:
 
 letsencrypt:
   email:
+
+monitoring:
+  # Create ServiceMonitors / PodMonitors / PrometheusRules for the MKS managed
+  # components (rendered from files/prometheus/). Requires the Prometheus
+  # operator CRDs (kube-prometheus-stack) on the cluster. Enable per-cluster.
+  enabled: false

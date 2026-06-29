@@ -1,0 +1,14 @@
+{{- /*
+Monitoring resources (ServiceMonitors, PodMonitors, PrometheusRules) for the
+MKS managed components. The manifests live as raw files under files/prometheus/
+so their Prometheus {{ ... }} templating is emitted literally rather than being
+processed by Helm. They target the observability namespace and carry the
+release: prometheus label so the platform Prometheus discovers them.
+Requires the Prometheus operator CRDs (kube-prometheus-stack) on the cluster.
+*/ -}}
+{{- if .Values.monitoring.enabled -}}
+{{- range $path, $_ := .Files.Glob "files/prometheus/*.yaml" }}
+---
+{{ $.Files.Get $path }}
+{{- end }}
+{{- end -}}
