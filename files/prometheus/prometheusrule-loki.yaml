@@ -1,7 +1,8 @@
-# Conservative Loki alerts: availability plus a 5xx error-rate signal.
-# The `job` matcher and the 10% threshold are starting points; validate against
-# live Loki targets (the chart's monitoring.serviceMonitor produces per-component
-# jobs) and tune before relying on them.
+# LokiAbsent covers total unavailability, which the loki chart's bundled alerts
+# (monitoring.alerts) do not provide. The 5xx error-rate signal now comes from
+# the chart (LokiRequestErrors) and is no longer defined here to avoid a
+# duplicate alert. owner: mks-admin so the central Alertmanager routes this to
+# the MKS Slack channel.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -22,19 +23,3 @@ spec:
           annotations:
             summary: "Loki is not being scraped."
             description: "Loki has disappeared from Prometheus service discovery; log ingestion and queries may be unavailable."
-        - alert: LokiRequestErrors
-          expr: |
-            100 * sum by (cluster, job, route) (
-              rate(loki_request_duration_seconds_count{status_code=~"5.."}[5m])
-            )
-            /
-            sum by (cluster, job, route) (
-              rate(loki_request_duration_seconds_count[5m])
-            ) > 10
-          for: 15m
-          labels:
-            severity: warning
-            owner: mks-admin
-          annotations:
-            summary: "Loki is returning a high rate of 5xx errors."
-            description: "{{ $labels.job }} route {{ $labels.route }} is returning more than 10% 5xx responses over 15m."
