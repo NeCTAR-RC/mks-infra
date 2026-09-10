@@ -61,6 +61,20 @@ spec:
   variables:
   - name: protectedNamespaces
     expression: "['kube-system', 'envoy-gateway-system', 'cert-manager', 'observability']"
+  # Cluster RBAC objects owned by Kubernetes or the managed platform.
+  # Anything not matched here is customer RBAC and may be managed by
+  # project-admins (e.g. ClusterRoles installed by their own Helm charts).
+  - name: protectedClusterRBACNames
+    expression: "['cluster-admin', 'admin', 'edit', 'view', 'project-admin', 'project-admins']"
+  - name: protectedClusterRBACPrefixes
+    expression: |
+      ['system:', 'kubeadm:', 'calico-', 'cilium',
+       'cert-manager', 'envoy-gateway', 'fluent-bit', 'loki',
+       'prometheus-', 'sealed-secrets', 'secrets-unsealer', 'mks-infra']
+  - name: isProtectedClusterRBAC
+    expression: |
+      request.name in variables.protectedClusterRBACNames ||
+      variables.protectedClusterRBACPrefixes.exists(p, request.name.startsWith(p))
   - name: isProjectAdmin
     expression: "'project-admins' in request.userInfo.groups"
   - name: isClusterRBAC
@@ -83,11 +97,16 @@ spec:
       variables.isNamespaceResource ||
       !(request.namespace in variables.protectedNamespaces)
     message: "project-admins cannot modify resources in protected namespaces"
-  # Block ClusterRole / ClusterRoleBinding writes
+  # Block writes to Kubernetes' and the platform's own ClusterRoles and
+  # ClusterRoleBindings. Other cluster RBAC is customer-managed and allowed;
+  # the API server's RBAC escalation prevention still applies, and because
+  # project-admin has no bind/escalate/impersonate, project-admins can only
+  # grant permissions they already hold.
   - expression: |
       !variables.isProjectAdmin ||
-      !variables.isClusterRBAC
-    message: "project-admins cannot create or modify ClusterRoles or ClusterRoleBindings"
+      !variables.isClusterRBAC ||
+      !variables.isProtectedClusterRBAC
+    message: "project-admins cannot modify platform ClusterRoles or ClusterRoleBindings"
   # Block modification or deletion of protected Namespace objects themselves
   - expression: |
       !variables.isProjectAdmin ||
