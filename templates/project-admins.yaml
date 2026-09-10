@@ -33,8 +33,9 @@ roleRef:
   name: project-admin
   apiGroup: rbac.authorization.k8s.io
 ---
-# Admission policy — blocks access to protected namespaces and
-# cluster-scoped escape hatches (RBAC writes, namespace deletion)
+# Admission policy — blocks access to protected namespaces and to
+# platform-owned cluster-scoped objects (RBAC, this policy itself,
+# webhook configurations, CRDs, gateway class, cluster issuer)
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -48,39 +49,46 @@ spec:
       operations: ["CREATE", "UPDATE", "DELETE"]
       resources: ["*"]
       scope: Namespaced
-    - apiGroups: ["rbac.authorization.k8s.io"]
+    - apiGroups: ["*"]
       apiVersions: ["*"]
       operations: ["CREATE", "UPDATE", "DELETE"]
-      resources: ["clusterroles", "clusterrolebindings"]
-      scope: Cluster
-    - apiGroups: [""]
-      apiVersions: ["v1"]
-      operations: ["UPDATE", "DELETE"]
-      resources: ["namespaces"]
+      resources: ["*"]
       scope: Cluster
   variables:
   - name: protectedNamespaces
-    expression: "['kube-system', 'envoy-gateway-system', 'cert-manager', 'observability']"
-  # Cluster RBAC objects owned by Kubernetes or the managed platform.
-  # Anything not matched here is customer RBAC and may be managed by
-  # project-admins (e.g. ClusterRoles installed by their own Helm charts).
-  - name: protectedClusterRBACNames
+    expression: "['kube-system', 'envoy-gateway-system', 'cert-manager', 'observability', 'mks-infra']"
+  # Cluster-scoped objects owned by Kubernetes or the managed platform,
+  # matched by exact name, name prefix, or '<api group>/<name>'. Anything
+  # not matched is customer-owned and may be managed by project-admins
+  # (e.g. ClusterRoles installed by their own Helm charts).
+  - name: protectedClusterObjectNames
     expression: "['cluster-admin', 'admin', 'edit', 'view', 'project-admin', 'project-admins']"
-  - name: protectedClusterRBACPrefixes
+  - name: protectedClusterObjectPrefixes
     expression: |
-      ['system:', 'kubeadm:', 'calico-', 'cilium',
+      ['system:', 'system-', 'kubeadm:', 'calico-', 'cilium',
        'cert-manager', 'envoy-gateway', 'fluent-bit', 'loki',
-       'prometheus-', 'sealed-secrets', 'secrets-unsealer', 'mks-infra']
-  - name: isProtectedClusterRBAC
+       'prometheus-', 'sealed-secrets', 'secrets-unsealer', 'mks-infra',
+       'restrict-project-admins']
+  - name: protectedClusterObjectGroupedNames
+    expression: "['gateway.networking.k8s.io/default', 'cert-manager.io/letsencrypt']"
+  - name: isProtectedClusterObject
     expression: |
-      request.name in variables.protectedClusterRBACNames ||
-      variables.protectedClusterRBACPrefixes.exists(p, request.name.startsWith(p))
+      request.name in variables.protectedClusterObjectNames ||
+      variables.protectedClusterObjectPrefixes.exists(p, request.name.startsWith(p)) ||
+      (request.resource.group + '/' + request.name) in variables.protectedClusterObjectGroupedNames
+  # CRDs belonging to platform components' API groups
+  - name: protectedAPIGroupSuffixes
+    expression: |
+      ['.cert-manager.io', '.monitoring.coreos.com', '.gateway.networking.k8s.io',
+       '.gateway.envoyproxy.io', '.bitnami.com', '.cilium.io', '.projectcalico.org']
   - name: isProjectAdmin
     expression: "'project-admins' in request.userInfo.groups"
-  - name: isClusterRBAC
+  - name: isClusterScoped
+    expression: "!has(request.namespace) || request.namespace == ''"
+  - name: isCRD
     expression: |
-      request.resource.group == 'rbac.authorization.k8s.io' &&
-      request.resource.resource in ['clusterroles', 'clusterrolebindings']
+      request.resource.group == 'apiextensions.k8s.io' &&
+      request.resource.resource == 'customresourcedefinitions'
   - name: isNamespaceResource
     expression: |
       request.resource.group == '' &&
@@ -93,20 +101,27 @@ spec:
   # Block writes inside protected namespaces
   - expression: |
       !variables.isProjectAdmin ||
-      variables.isClusterRBAC ||
-      variables.isNamespaceResource ||
+      variables.isClusterScoped ||
       !(request.namespace in variables.protectedNamespaces)
     message: "project-admins cannot modify resources in protected namespaces"
-  # Block writes to Kubernetes' and the platform's own ClusterRoles and
-  # ClusterRoleBindings. Other cluster RBAC is customer-managed and allowed;
-  # the API server's RBAC escalation prevention still applies, and because
-  # project-admin has no bind/escalate/impersonate, project-admins can only
-  # grant permissions they already hold.
+  # Block writes to Kubernetes' and the platform's own cluster-scoped
+  # objects: RBAC, this admission policy, webhook configurations, the
+  # gateway class and cluster issuer. Other cluster-scoped writes are
+  # allowed; for RBAC the API server's escalation prevention still
+  # applies, and because project-admin has no bind/escalate/impersonate,
+  # project-admins can only grant permissions they already hold.
   - expression: |
       !variables.isProjectAdmin ||
-      !variables.isClusterRBAC ||
-      !variables.isProtectedClusterRBAC
-    message: "project-admins cannot modify platform ClusterRoles or ClusterRoleBindings"
+      !variables.isClusterScoped ||
+      variables.isNamespaceResource ||
+      !variables.isProtectedClusterObject
+    message: "project-admins cannot modify platform-owned cluster-scoped objects"
+  # Block writes to CRDs that belong to the platform components' API groups
+  - expression: |
+      !variables.isProjectAdmin ||
+      !variables.isCRD ||
+      !variables.protectedAPIGroupSuffixes.exists(s, request.name.endsWith(s))
+    message: "project-admins cannot modify platform CRDs"
   # Block modification or deletion of protected Namespace objects themselves
   - expression: |
       !variables.isProjectAdmin ||
