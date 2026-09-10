@@ -81,8 +81,23 @@ spec:
     expression: |
       ['.cert-manager.io', '.monitoring.coreos.com', '.gateway.networking.k8s.io',
        '.gateway.envoyproxy.io', '.bitnami.com', '.cilium.io', '.projectcalico.org']
-  - name: isProjectAdmin
-    expression: "'project-admins' in request.userInfo.groups"
+  # Restricted identities: project-admins, and any service account outside
+  # the protected (platform) namespaces. Restricting customer service
+  # accounts too means project-admins cannot bypass this policy by
+  # delegating their RBAC permissions to a service account, which would not
+  # carry the project-admins group. Platform identities are unaffected:
+  # nodes, control-plane components, and service accounts in protected
+  # namespaces (including the Argo CD management service account in
+  # kube-system).
+  - name: isPlatformSA
+    expression: |
+      variables.protectedNamespaces.exists(ns,
+        request.userInfo.username.startsWith('system:serviceaccount:' + ns + ':'))
+  - name: isRestricted
+    expression: |
+      'project-admins' in request.userInfo.groups ||
+      (request.userInfo.username.startsWith('system:serviceaccount:') &&
+       !variables.isPlatformSA)
   - name: isClusterScoped
     expression: "!has(request.namespace) || request.namespace == ''"
   - name: isCRD
@@ -100,10 +115,10 @@ spec:
   validations:
   # Block writes inside protected namespaces
   - expression: |
-      !variables.isProjectAdmin ||
+      !variables.isRestricted ||
       variables.isClusterScoped ||
       !(request.namespace in variables.protectedNamespaces)
-    message: "project-admins cannot modify resources in protected namespaces"
+    message: "only the MKS platform can modify resources in protected namespaces"
   # Block writes to Kubernetes' and the platform's own cluster-scoped
   # objects: RBAC, this admission policy, webhook configurations, the
   # gateway class and cluster issuer. Other cluster-scoped writes are
@@ -111,36 +126,36 @@ spec:
   # applies, and because project-admin has no bind/escalate/impersonate,
   # project-admins can only grant permissions they already hold.
   - expression: |
-      !variables.isProjectAdmin ||
+      !variables.isRestricted ||
       !variables.isClusterScoped ||
       variables.isNamespaceResource ||
       !variables.isProtectedClusterObject
-    message: "project-admins cannot modify platform-owned cluster-scoped objects"
+    message: "only the MKS platform can modify platform-owned cluster-scoped objects"
   # Block writes to CRDs that belong to the platform components' API groups
   - expression: |
-      !variables.isProjectAdmin ||
+      !variables.isRestricted ||
       !variables.isCRD ||
       !variables.protectedAPIGroupSuffixes.exists(s, request.name.endsWith(s))
-    message: "project-admins cannot modify platform CRDs"
+    message: "only the MKS platform can modify platform CRDs"
   # Block modification or deletion of protected Namespace objects themselves
   - expression: |
-      !variables.isProjectAdmin ||
+      !variables.isRestricted ||
       !variables.isNamespaceResource ||
       !(request.name in variables.protectedNamespaces)
-    message: "project-admins cannot modify or delete protected namespaces"
+    message: "only the MKS platform can modify or delete protected namespaces"
   # Block project-admins from claiming the mks-admin alert owner on their own
   # PrometheusRules, which would route their alerts to the MKS on-call channel
   # via the central Alertmanager. Customer rules are otherwise evaluated and
   # alert through the local Alertmanager.
   - expression: |
-      !variables.isProjectAdmin ||
+      !variables.isRestricted ||
       !variables.isPrometheusRule ||
       !(request.operation == 'CREATE' || request.operation == 'UPDATE') ||
       !has(object.spec) || !has(object.spec.groups) ||
       !object.spec.groups.exists(g,
         has(g.rules) && g.rules.exists(r,
           has(r.labels) && 'owner' in r.labels && r.labels['owner'] == 'mks-admin'))
-    message: "project-admins cannot set the owner=mks-admin label on PrometheusRule alerts"
+    message: "the owner=mks-admin label on PrometheusRule alerts is reserved for the MKS platform"
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
