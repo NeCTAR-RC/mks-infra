@@ -55,8 +55,13 @@ spec:
       resources: ["*"]
       scope: Cluster
   variables:
+  # Namespaces owned by Kubernetes, Magnum (CNI, cloud provider, CSI, node
+  # agents) or the managed platform. Writes into them are blocked for
+  # restricted identities, and service accounts in them are trusted as
+  # platform identities (see isPlatformSA). Configured via
+  # .Values.protectedNamespaces so a cluster can extend the list.
   - name: protectedNamespaces
-    expression: "['kube-system', 'envoy-gateway-system', 'cert-manager', 'observability', 'mks-infra']"
+    expression: {{ .Values.protectedNamespaces | toJson | quote }}
   # Cluster-scoped objects owned by Kubernetes or the managed platform,
   # matched by exact name, name prefix, or '<api group>/<name>'. Anything
   # not matched is customer-owned and may be managed by project-admins
@@ -88,7 +93,9 @@ spec:
   # carry the project-admins group. Platform identities are unaffected:
   # nodes, control-plane components, and service accounts in protected
   # namespaces (including the Argo CD management service account in
-  # kube-system).
+  # kube-system, and the Magnum-installed components in openstack-system,
+  # tigera-operator and friends, some of which write into kube-system or
+  # manage protected cluster-scoped objects).
   - name: isPlatformSA
     expression: |
       variables.protectedNamespaces.exists(ns,

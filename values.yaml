@@ -14,3 +14,30 @@ monitoring:
   # components (rendered from files/prometheus/). Requires the Prometheus
   # operator CRDs (kube-prometheus-stack) on the cluster. Enable per-cluster.
   enabled: false
+
+# Namespaces the restrict-project-admins admission policy treats as
+# platform-owned. Project-admins (and customer service accounts) cannot write
+# into them, and service accounts in them are trusted as platform identities.
+# Every namespace whose workloads write into kube-system or manage protected
+# cluster-scoped objects must be listed, or those workloads are denied: the
+# OpenStack cloud-controller-manager holds its leader election lease in
+# kube-system, and the tigera operator manages the Calico CRDs and
+# ClusterRoles. Overriding this list per cluster replaces it, so include the
+# defaults.
+protectedNamespaces:
+  # Kubernetes
+  - kube-system
+  - kube-public
+  - kube-node-lease
+  # Magnum-installed components
+  - openstack-system
+  - calico-system
+  - tigera-operator
+  - cilium-secrets
+  - node-feature-discovery
+  - node-problem-detector
+  # MKS-managed components
+  - envoy-gateway-system
+  - cert-manager
+  - observability
+  - mks-infra
