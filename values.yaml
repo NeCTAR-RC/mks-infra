@@ -4,10 +4,31 @@
 gateway:
   replicas: 2
   minAvailable: 1
+  # Floating IP, created in the customer's OpenStack project beforehand, that
+  # the Envoy LoadBalancer Service is pinned to. cloud-provider-openstack
+  # looks the address up and attaches it instead of allocating a new one.
   loadBalancerIP:
+  # Annotations added to the Envoy LoadBalancer Service. Per-cluster values
+  # merge into this map rather than replacing it. keep-floatingip stops
+  # cloud-provider-openstack releasing the floating IP if the Service is
+  # ever deleted.
+  serviceAnnotations:
+    loadbalancer.openstack.org/keep-floatingip: "true"
+  # Which namespaces may attach ListenerSets to the platform Gateway: None,
+  # Same, All or Selector. With Selector, set selector to a label selector
+  # over namespaces. Customers define hostnames, TLS and routes through
+  # ListenerSets in their own namespaces; see README.md. The chart-managed
+  # gateway.listeners list was removed in 1.0.0.
+  allowedListeners:
+    from: All
+    selector: {}
 
 letsencrypt:
   email:
+  # Also render a letsencrypt-staging ClusterIssuer against the Let's Encrypt
+  # staging endpoint, so customers can rehearse issuance without spending
+  # production rate limits.
+  staging: true
 
 monitoring:
   # Create ServiceMonitors / PodMonitors / PrometheusRules for the MKS managed

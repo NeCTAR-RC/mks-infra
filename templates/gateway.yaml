@@ -3,28 +3,34 @@ kind: Gateway
 metadata:
   name: default
   annotations:
+    # The Gateway has no TLS listener of its own, so this issues nothing. It
+    # is kept so cert-manager's gateway-shim keeps reconciling the Gateway
+    # and removes any Certificates it created for listeners that no longer
+    # exist (the chart-managed listeners of releases before 1.0.0).
     cert-manager.io/cluster-issuer: letsencrypt
 spec:
   gatewayClassName: default
+  # Customers attach ListenerSets from their own namespaces. Listeners on
+  # this Gateway always win conflicts with ListenerSet listeners.
+  allowedListeners:
+    namespaces:
+      from: {{ .Values.gateway.allowedListeners.from }}
+      {{- if eq .Values.gateway.allowedListeners.from "Selector" }}
+      selector:
+        {{- toYaml .Values.gateway.allowedListeners.selector | nindent 8 }}
+      {{- end }}
   listeners:
+    # Plain HTTP for every hostname. It serves the HTTP-01 challenge routes
+    # cert-manager creates in customer namespaces and the catch-all redirect
+    # to HTTPS below. A route with a hostname takes precedence over the
+    # redirect, so customers must not reference this Gateway without a
+    # sectionName (see README.md).
     - name: http
       port: 80
       protocol: HTTP
-    {{- range $listener := .Values.gateway.listeners }}
-    - name: {{ $listener.hostname }}
-      port: {{ $listener.port | default "443" }}
-      protocol: {{ $listener.protocol | default "HTTPS" }}
-      hostname: {{ $listener.hostname }}
-      tls:
-        mode: Terminate
-        certificateRefs:
-          - group: ''
-            kind: Secret
-            name: {{ $listener.hostname }}-cert
       allowedRoutes:
         namespaces:
           from: All
-    {{- end }}
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute

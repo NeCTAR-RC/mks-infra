@@ -12,7 +12,15 @@ spec:
         replicas: {{ .Values.gateway.replicas }}
       envoyPDB:
         minAvailable: {{ .Values.gateway.minAvailable }}
-      {{- if .Values.gateway.loadBalancerIP }}
+      {{- if or .Values.gateway.loadBalancerIP .Values.gateway.serviceAnnotations }}
       envoyService:
-        loadBalancerIP: {{ .Values.gateway.loadBalancerIP }}
+        {{- with .Values.gateway.loadBalancerIP }}
+        # cloud-provider-openstack attaches this pre-existing floating IP to
+        # the Octavia load balancer instead of allocating a new one.
+        loadBalancerIP: {{ . }}
+        {{- end }}
+        {{- with .Values.gateway.serviceAnnotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
       {{- end }}

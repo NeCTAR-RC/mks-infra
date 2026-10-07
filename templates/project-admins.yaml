@@ -75,7 +75,9 @@ spec:
        'prometheus-', 'sealed-secrets', 'secrets-unsealer', 'mks-infra',
        'restrict-project-admins']
   - name: protectedClusterObjectGroupedNames
-    expression: "['gateway.networking.k8s.io/default', 'cert-manager.io/letsencrypt']"
+    expression: |
+      ['gateway.networking.k8s.io/default', 'cert-manager.io/letsencrypt',
+       'cert-manager.io/letsencrypt-staging']
   - name: isProtectedClusterObject
     expression: |
       request.name in variables.protectedClusterObjectNames ||

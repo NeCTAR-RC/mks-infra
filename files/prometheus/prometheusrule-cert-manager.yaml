@@ -19,6 +19,10 @@ spec:
             description: "New certificates will not be able to be minted, and existing ones can't be renewed until cert-manager is back."
             runbook_url: "https://github.com/imusmanmalik/cert-manager-mixin/blob/main/RUNBOOK.md#certmanagerabsent"
             summary: "Cert Manager has disappeared from Prometheus service discovery."
+    # Every Certificate on an MKS cluster belongs to the customer (issued for
+    # their ListenerSets, in their namespaces), so the per-certificate alerts
+    # carry no owner label and stay with the cluster's local Alertmanager.
+    # cert-manager itself and the shared ACME account remain platform-owned.
     - name: certificates
       rules:
         - alert: CertManagerCertExpirySoon
@@ -35,7 +39,6 @@ spec:
           for: 1h
           labels:
             severity: warning
-            owner: mks-admin
           annotations:
             description: "The domain that this cert covers will be unavailable after {{ $value | humanizeDuration }}. Clients using endpoints that this cert protects will start to fail in {{ $value | humanizeDuration }}."
             runbook_url: "https://github.com/imusmanmalik/cert-manager-mixin/blob/main/RUNBOOK.md#certmanagercertexpirysoon"
@@ -48,7 +51,6 @@ spec:
           for: 10m
           labels:
             severity: critical
-            owner: mks-admin
           annotations:
             description: "This certificate has not been ready to serve traffic for at least 10m. If the cert is being renewed or there is another valid cert, the ingress controller _may_ be able to serve that instead."
             runbook_url: "https://github.com/imusmanmalik/cert-manager-mixin/blob/main/RUNBOOK.md#certmanagercertnotready"
