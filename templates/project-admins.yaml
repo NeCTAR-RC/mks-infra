@@ -86,23 +86,36 @@ spec:
     expression: |
       ['.cert-manager.io', '.monitoring.coreos.com', '.gateway.networking.k8s.io',
        '.gateway.envoyproxy.io', '.bitnami.com', '.cilium.io', '.projectcalico.org']
-  # Restricted identities: project-admins, and any service account outside
-  # the protected (platform) namespaces. Restricting customer service
-  # accounts too means project-admins cannot bypass this policy by
-  # delegating their RBAC permissions to a service account, which would not
-  # carry the project-admins group. Platform identities are unaffected:
-  # nodes, control-plane components, and service accounts in protected
-  # namespaces (including the Argo CD management service account in
-  # kube-system, and the Magnum-installed components in openstack-system,
-  # tigera-operator and friends, some of which write into kube-system or
-  # manage protected cluster-scoped objects).
+  # Restricted identities: project-admins, users from the customer's OIDC
+  # provider, and any service account outside the protected (platform)
+  # namespaces. Restricting customer service accounts too means
+  # project-admins cannot bypass this policy by delegating their RBAC
+  # permissions to a service account, which would not carry the
+  # project-admins group. Platform identities are unaffected: nodes,
+  # control-plane components, and service accounts in protected namespaces
+  # (including the Argo CD management service account in kube-system, and
+  # the Magnum-installed components in openstack-system, tigera-operator
+  # and friends, some of which write into kube-system or manage protected
+  # cluster-scoped objects).
   - name: isPlatformSA
     expression: |
       variables.protectedNamespaces.exists(ns,
         request.userInfo.username.startsWith('system:serviceaccount:' + ns + ':'))
+  # OIDC identities. When a cluster is created with the oidc_* Magnum
+  # labels, the openstack-cluster chart fixes the kube-apiserver
+  # --oidc-username-prefix and --oidc-groups-prefix to 'oidc:', so users
+  # from the customer's identity provider are recognisable by prefix
+  # whatever bindings a project-admin creates for them. Without this a
+  # project-admin could bind an OIDC group to project-admin and its members
+  # would escape every restriction below.
+  - name: isOIDCIdentity
+    expression: |
+      request.userInfo.username.startsWith('oidc:') ||
+      request.userInfo.groups.exists(g, g.startsWith('oidc:'))
   - name: isRestricted
     expression: |
       'project-admins' in request.userInfo.groups ||
+      variables.isOIDCIdentity ||
       (request.userInfo.username.startsWith('system:serviceaccount:') &&
        !variables.isPlatformSA)
   - name: isClusterScoped
@@ -131,7 +144,8 @@ spec:
   # gateway class and cluster issuer. Other cluster-scoped writes are
   # allowed; for RBAC the API server's escalation prevention still
   # applies, and because project-admin has no bind/escalate/impersonate,
-  # project-admins can only grant permissions they already hold.
+  # project-admins can only grant permissions they already hold, and any
+  # OIDC user or group they grant them to is restricted by this policy too.
   - expression: |
       !variables.isRestricted ||
       !variables.isClusterScoped ||
