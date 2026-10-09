@@ -116,6 +116,10 @@ curl -I https://myapp.example.org
 While a certificate is being issued, cert-manager creates a temporary
 `HTTPRoute` in your namespace for the challenge; it lists both the Gateway
 and your `ListenerSet` as parents and disappears when the order completes.
+Until then, plain HTTP for that hostname answers 404 on every path except
+the challenge path instead of redirecting to HTTPS. If it stays that way
+the challenge is stuck: `kubectl -n myapp describe challenge` says why,
+usually DNS.
 
 ### Certificates
 
@@ -145,6 +149,10 @@ and your `ListenerSet` as parents and disappears when the order completes.
   does not answer.
 - TCP and UDP listeners are allowed (`TCPRoute`, `UDPRoute`). Each new port
   is added to the cluster's load balancer.
+- A `ListenerSet` may also carry a port-80 HTTP listener for a hostname.
+  Its routes replace the redirect for that hostname, and a pending
+  challenge route for the hostname is merged into it, so issuance still
+  works.
 - Envoy Gateway policies (`ClientTrafficPolicy`, `SecurityPolicy`,
   `BackendTrafficPolicy`) can target your `ListenerSet` or its listeners.
   Settings that apply to a whole port, such as TLS or connection limits on
@@ -184,10 +192,19 @@ Service `externalIPs`, which the OpenStack provider ignores.
 Both ClusterIssuers solve HTTP-01 through `Gateway mks-infra/default`,
 listener `http`. cert-manager creates the challenge route in the
 certificate's namespace, which is why the `http` listener admits routes from
-every namespace. The Gateway keeps its `cert-manager.io/cluster-issuer`
-annotation even though it has no TLS listener: cert-manager only reconciles
-annotated Gateways, and that reconcile is what deletes Certificates it
-created for listeners that no longer exist.
+every namespace. While a challenge is pending that route gives the hostname
+its own port-80 virtual host in Envoy, so plain HTTP for the hostname
+answers 404 on every other path instead of redirecting; this clears when
+the order completes.
+
+The Gateway carries no `cert-manager.io/cluster-issuer` annotation.
+cert-manager's ListenerSet support (observed on 1.21.2) falls back to the
+parent Gateway's annotation when a `ListenerSet` has none, so an annotated
+Gateway would request a production certificate for every HTTPS listener on
+the cluster, including ones whose Secret the customer supplied, and
+overwrite that Secret. Issuance is therefore opt-in per `ListenerSet`.
+Release 1.0.0 kept the annotation so gateway-shim would garbage-collect the
+pre-1.0.0 Certificates; since 1.0.1 the cutover deletes them by hand.
 
 ### Monitoring
 
@@ -216,7 +233,11 @@ entry in `gateway.listeners`, with the certificate in `mks-infra`. The 1.0.0
 bump removes those listeners, so prepare each hostname **before** bumping a
 cluster's `targetRevision`. cert-manager must already have ListenerSet
 support enabled on that cluster (`config.gatewayAPI.enableListenerSet` and
-the `ListenerSets` feature gate).
+the `ListenerSets` feature gate). Changing that ConfigMap does not restart
+the cert-manager Deployment, so delete the controller pod afterwards and
+check its log for `starting controller` with `controller="listenerset"`.
+The platform-side steps need the cluster's admin kubeconfig: a
+project-admins identity cannot write into `mks-infra` or `cert-manager`.
 
 For each hostname, in the application's namespace:
 
@@ -233,22 +254,26 @@ For each hostname, in the application's namespace:
 2. Create the `ListenerSet` as in "Add a hostname", with `certificateRefs`
    pointing at `<hostname>-tls`. It reports `Accepted=False` with reason
    `NotAllowed` until the chart is bumped. That is expected.
-3. Edit the application's `HTTPRoute`: on the existing Gateway `parentRef`
-   add `sectionName: <hostname>` (the old listener is named after the
-   hostname), and add a second `parentRef` to the `ListenerSet`. The
-   `sectionName` matters: after the bump the Gateway's port 80 admits every
-   namespace, and a Gateway reference without one would serve the hostname
-   in plain text.
+3. Edit the application's `HTTPRoute` where it is deployed from (a route
+   that Argo CD manages must change at its source): on the existing Gateway
+   `parentRef` add `sectionName: <hostname>` (the old listener is named
+   after the hostname), and add a second `parentRef` to the `ListenerSet`.
+   The `sectionName` matters: after the bump the Gateway's port 80 admits
+   every namespace, and a Gateway reference without one would serve the
+   hostname in plain text.
 
-Then bump the cluster's `targetRevision` to 1.0.0 and remove `listeners:`
-from its values file in the same change. Envoy Gateway programs the
-`ListenerSet` listeners in the same update that removes the Gateway ones.
-Afterwards:
+Then bump the cluster's `targetRevision`. Merge the bump before touching the
+values file: the chart ignores a stale `listeners:` key, whereas removing
+the key while 0.9.x is still deployed drops the HTTPS listeners with
+nothing to replace them. Envoy Gateway programs the `ListenerSet` listeners
+in the same update that removes the Gateway ones, and cert-manager
+re-issues each copied certificate once. Afterwards:
 
 4. Remove the Gateway `parentRef` from the `HTTPRoute`.
-5. Once the new `Certificate` is `Ready`, delete the old Secret from
-   `mks-infra` (cert-manager removes the old `Certificate` but never the
-   Secret).
+5. Remove `listeners:` from the cluster's values file.
+6. Once the new `Certificate`s are `Ready`, delete the old `Certificate`s
+   and Secrets from `mks-infra`. Nothing garbage-collects them, and a
+   leftover `Certificate` keeps renewing through the Gateway.
 
 Do not edit the Gateway with `kubectl`; Argo CD self-heal reverts it.
 

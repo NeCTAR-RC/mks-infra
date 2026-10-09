@@ -2,12 +2,10 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: default
-  annotations:
-    # The Gateway has no TLS listener of its own, so this issues nothing. It
-    # is kept so cert-manager's gateway-shim keeps reconciling the Gateway
-    # and removes any Certificates it created for listeners that no longer
-    # exist (the chart-managed listeners of releases before 1.0.0).
-    cert-manager.io/cluster-issuer: letsencrypt
+  # Deliberately no cert-manager.io/cluster-issuer annotation: cert-manager's
+  # ListenerSet shim inherits it for every ListenerSet that has none of its
+  # own, which would request certificates for customer-supplied Secrets too.
+  # Issuance is opt-in per ListenerSet; see README.md.
 spec:
   gatewayClassName: default
   # Customers attach ListenerSets from their own namespaces. Listeners on
