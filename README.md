@@ -241,15 +241,20 @@ project-admins identity cannot write into `mks-infra` or `cert-manager`.
 
 For each hostname, in the application's namespace:
 
-1. Copy the current certificate so there is no gap. The copy is adopted or
-   re-issued once by cert-manager after the cutover; both are seamless.
+1. Copy the current certificate so there is no gap. Keep the
+   `cert-manager.io/*` annotations and point `certificate-name` at the new
+   name: cert-manager then adopts the Secret as it is (`Ready`, no Order).
+   Stripping the annotations works too, but makes it re-issue once, with
+   about a minute of 404 on plain HTTP while the challenge is pending.
    ```sh
    kubectl -n mks-infra get secret <hostname>-cert -o json \
      | jq 'del(.metadata.namespace, .metadata.ownerReferences, .metadata.uid,
                .metadata.resourceVersion, .metadata.creationTimestamp,
-               .metadata.managedFields, .metadata.annotations, .metadata.labels)
-           | .metadata.name = "<hostname>-tls"' \
-     | kubectl -n <app-namespace> apply -f -
+               .metadata.managedFields,
+               .metadata.annotations["kubectl.kubernetes.io/last-applied-configuration"])
+           | .metadata.name = "<hostname>-tls"
+           | .metadata.annotations["cert-manager.io/certificate-name"] = "<hostname>-tls"' \
+     | kubectl -n <app-namespace> create -f -
    ```
 2. Create the `ListenerSet` as in "Add a hostname", with `certificateRefs`
    pointing at `<hostname>-tls`. It reports `Accepted=False` with reason
@@ -266,8 +271,10 @@ Then bump the cluster's `targetRevision`. Merge the bump before touching the
 values file: the chart ignores a stale `listeners:` key, whereas removing
 the key while 0.9.x is still deployed drops the HTTPS listeners with
 nothing to replace them. Envoy Gateway programs the `ListenerSet` listeners
-in the same update that removes the Gateway ones, and cert-manager
-re-issues each copied certificate once. Afterwards:
+in the same update that removes the Gateway ones; the copied certificates
+keep serving unchanged, and Envoy drains the replaced 443 filter chains
+(`--drain-time-s`, 60 s on MKS), so open websockets reconnect once within
+that window. Afterwards:
 
 4. Remove the Gateway `parentRef` from the `HTTPRoute`.
 5. Remove `listeners:` from the cluster's values file.
